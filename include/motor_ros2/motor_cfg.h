@@ -123,7 +123,7 @@ static const std::map<ActuatorType, ActuatorOperation> ACTUATOR_OPERATION_MAPPIN
     { ActuatorType::ROBSTRIDE_02,       { 4 * M_PI, 44, 17, 500.0, 5.0,  } },
     { ActuatorType::ROBSTRIDE_03,       { 4 * M_PI, 50, 60, 5000.0, 100.0, } },
     { ActuatorType::ROBSTRIDE_04,       { 4 * M_PI, 15, 120, 5000.0, 100.0,  } },
-    { ActuatorType::ROBSTRIDE_05,       { 4 * M_PI, 33, 17, 500.0, 5.0,  } },
+    { ActuatorType::ROBSTRIDE_05,       { 4 * M_PI, 50, 5.5, 500.0, 5.0,  } },
     { ActuatorType::ROBSTRIDE_06,       { 4 * M_PI, 20, 60, 5000.0, 100.0,  } },
 };
 
@@ -201,7 +201,7 @@ public:
 
     void Set_RobStrite_Motor_parameter(uint16_t Index, float Value, char Value_mode);
 
-    std::tuple<float, float, float, float> send_velocity_mode_command(float velocity_rad_s);
+    std::tuple<float, float, float, float> send_velocity_mode_command(float velocity_rad_s, float curr_limit = 11.0f, float acc = 20.0f);
 
     // 发送使能指令（通信类型3）
     std::tuple<float, float, float, float> enable_motor();
@@ -233,9 +233,9 @@ public:
     }
 
 	void Get_RobStrite_Motor_parameter(uint16_t Index);
-	std::tuple<float, float, float, float> RobStrite_Motor_PosPP_control(float Speed, float Acceleration, float Angle);
+	std::tuple<float, float, float, float> RobStrite_Motor_PosPP_control(float Angle, float Speed = 10.0f, float Acceleration = 10.0f);
     std::tuple<float, float, float, float> RobStrite_Motor_PosCSP_control(float Speed, float Angle);
-	std::tuple<float, float, float, float> RobStrite_Motor_Current_control(float IqCommand, float IdCommand);
+	std::tuple<float, float, float, float> RobStrite_Motor_Current_control(float IqCommand, float IdCommand = 0.0f);
 	void RobStrite_Motor_Set_Zero_control();
 	void Disenable_Motor( uint8_t clear_error);
 	void Set_CAN_ID(uint8_t Set_CAN_ID);

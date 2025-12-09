@@ -15,7 +15,7 @@ class MotorControlSample : public rclcpp::Node
 public:
     MotorControlSample() : 
     rclcpp::Node("motor_control_set_node"),
-    motor(RobStrideMotor("/dev/ttyUSB1", 0x00, 0x7F, 0))
+    motor(RobStrideMotor("/dev/ttyUSB0", 0x00, 0x7F, 5))
     {
         motor.enable_motor();
 
@@ -34,20 +34,38 @@ public:
 
     void excute_loop()
     {
-        float position = 1.57f;
-        float velocity = 0.1f;
-        while (true)
+        motor.Set_ZeroPos();
+        usleep(1000);
+        float position = 6.28f;
+        float velocity = 0.0f;
+        long long print_counter = 0;
+        while (running_ && rclcpp::ok())
         {
             // 自定义循环逻辑
             // 依次为速度，运控，位置模式, 电流，CSP位置
+             auto start_time = std::chrono::high_resolution_clock::now();
 
             auto [position_feedback, velocity_feedback, torque, temperature] =
-                // motor.send_motion_command(0.0, position, velocity, 0.1f, 0.1f);
-            // motor.RobStrite_Motor_PosCSP_control(float Speed, float Acceleration, float Angle);
-            // motor.RobStrite_Motor_Current_control(float IqCommand, float IdCommand);
-            // motor.send_velocity_mode_command(5.0f);
-            motor.RobStrite_Motor_PosCSP_control(position, velocity);
+                motor.send_motion_command(0.0, position, velocity, 0.5f, 0.5f);
+            // motor.RobStrite_Motor_PosPP_control(position, velocity);
+            // motor.RobStrite_Motor_Current_control(0.0f);
+            // motor.send_velocity_mode_command(velocity);
+            // motor.RobStrite_Motor_PosCSP_control(velocity, position);
 
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+
+            if (print_counter++ % 100 == 0) {
+                std::cout << "[STATUS] Duration: " << duration_us << " us, "
+                    << "Position Feedback: " << position_feedback
+                    << ", Velocity Feedback: " << velocity_feedback
+                    << ", Torque: " << torque
+                    << ", Temperature: " << temperature << std::endl;
+                motor.Get_RobStrite_Motor_parameter(0x7019);
+                motor.Get_RobStrite_Motor_parameter(0x701B);
+                std::cout << "MechPos: " << motor.drw.mechPos.data << std::endl;
+                std::cout << "mechVel: " << motor.drw.mechVel.data << std::endl;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));  // loop rate
 
         }

@@ -149,7 +149,7 @@ ReceiveResult RobStrideMotor::receive(double timeout_sec)
                         }
 
                         // Debug prints
-                        std::cout << "RX ID: " << std::hex << can_id << std::dec << std::endl;
+                        // std::cout << "RX ID: " << std::hex << can_id << std::dec << std::endl;
 
                         return std::make_tuple(communication_type, extra_data, host_id, data_vec);
                     } else {
@@ -189,7 +189,7 @@ void RobStrideMotor::receive_status_frame()
         throw std::runtime_error("Data size too small");
     }
 
-    std::cout << "communication_type: " << static_cast<int>(communication_type) << std::endl;
+    // std::cout << "communication_type: " << static_cast<int>(communication_type) << std::endl;
     if (communication_type == Communication_Type_MotorRequest) // Type 2 Feedback
     {
         // Parse Big Endian Data
@@ -289,7 +289,6 @@ void RobStrideMotor::Set_RobStrite_Motor_parameter(uint16_t Index, float Value, 
     }
 
     send_can_frame_niren(frame);
-    std::cout << "[✓] Set single parameter command sent." << std::endl;
     receive_status_frame();
 }
 
@@ -323,6 +322,9 @@ std::tuple<float, float, float, float> RobStrideMotor::send_motion_command(float
         usleep(1000);
         Get_RobStrite_Motor_parameter(0x7005);
         usleep(1000);
+        enable_motor();
+        usleep(1000);
+        Motor_Set_All.set_motor_mode = move_control_mode;
     }
 
     struct can_frame frame{};
@@ -348,13 +350,16 @@ std::tuple<float, float, float, float> RobStrideMotor::send_motion_command(float
     frame.data[7] = kd_u;
 
     send_can_frame_niren(frame);
-    std::cout << "[✓] Motion command sent." << std::endl;
     receive_status_frame();
     return std::make_tuple(position_, velocity_, torque_, temperature_);
 }
 
-std::tuple<float, float, float, float> RobStrideMotor::send_velocity_mode_command(float velocity_rad_s)
+std::tuple<float, float, float, float> RobStrideMotor::send_velocity_mode_command(float velocity_rad_s, float curr_limit, float acc)
 {
+    Motor_Set_All.set_limit_cur = curr_limit;
+    Motor_Set_All.set_acc = acc;
+    Motor_Set_All.set_speed = velocity_rad_s;
+
     if(drw.run_mode.data != 2 && pattern == 2)
     {
         Disenable_Motor(0);
@@ -364,12 +369,14 @@ std::tuple<float, float, float, float> RobStrideMotor::send_velocity_mode_comman
         Get_RobStrite_Motor_parameter(0x7005);
         usleep(1000);
         enable_motor();
-        Set_RobStrite_Motor_parameter(0X7018, 27.0f, Set_parameter);
         usleep(1000);
-        Set_RobStrite_Motor_parameter(0X7026, Motor_Set_All.set_acc,   Set_parameter);
-        usleep(1000);
+        Motor_Set_All.set_motor_mode = Speed_control_mode;
     }
-    Set_RobStrite_Motor_parameter(0X700A, velocity_rad_s, Set_parameter);
+
+    Set_RobStrite_Motor_parameter(0X7018, Motor_Set_All.set_limit_cur, Set_parameter);
+    Set_RobStrite_Motor_parameter(0X7022, Motor_Set_All.set_acc,   Set_parameter);
+    Set_RobStrite_Motor_parameter(0X700A, Motor_Set_All.set_speed, Set_parameter);
+
     return std::make_tuple(position_, velocity_, torque_, temperature_);
 }
 
@@ -406,7 +413,7 @@ void RobStrideMotor::Get_RobStrite_Motor_parameter(uint16_t Index)
     receive_status_frame();
 }
 
-std::tuple<float, float, float, float> RobStrideMotor::RobStrite_Motor_PosPP_control(float Speed, float Acceleration, float Angle)
+std::tuple<float, float, float, float> RobStrideMotor::RobStrite_Motor_PosPP_control(float Angle, float Speed, float Acceleration)
 {
     if(drw.run_mode.data != 1 && pattern == 2)
     {
@@ -418,20 +425,16 @@ std::tuple<float, float, float, float> RobStrideMotor::RobStrite_Motor_PosPP_con
         usleep(1000);
         enable_motor();
         usleep(1000);
+        Motor_Set_All.set_motor_mode = PosPP_control_mode;
     }
 
 	Motor_Set_All.set_speed = Speed;
 	Motor_Set_All.set_acc   = Acceleration;
 	Motor_Set_All.set_angle = Angle;
 
-	Set_RobStrite_Motor_parameter(0X7025, Motor_Set_All.set_speed, Set_parameter);
-    usleep(1000);
-
-	Set_RobStrite_Motor_parameter(0X7026, Motor_Set_All.set_acc,   Set_parameter);
-    usleep(1000);
-
+	Set_RobStrite_Motor_parameter(0X7024, Motor_Set_All.set_speed, Set_parameter);
+	Set_RobStrite_Motor_parameter(0X7025, Motor_Set_All.set_acc,   Set_parameter);
 	Set_RobStrite_Motor_parameter(0X7016, Motor_Set_All.set_angle, Set_parameter);
-    usleep(1000);
 
     return std::make_tuple(position_, velocity_, torque_, temperature_);
 }
@@ -448,6 +451,7 @@ std::tuple<float, float, float, float> RobStrideMotor::RobStrite_Motor_Current_c
         usleep(1000);
         enable_motor();
         usleep(1000);
+        Motor_Set_All.set_motor_mode = Elect_control_mode;
     }
 
     Motor_Set_All.set_iq = IqCommand;
@@ -456,13 +460,10 @@ std::tuple<float, float, float, float> RobStrideMotor::RobStrite_Motor_Current_c
     // Warning: Logic here might need adjustment based on drw.iq_ref updates
     // Assuming float_to_uint conversion is handled by motor logic or unnecessary for direct parameter write
     // If param write expects float, pass float directly.
-    // Motor_Set_All.set_iq = float_to_uint(Motor_Set_All.set_iq, SCIQ_MIN,SC_MAX, 16);
+    // Motor_Set_All.set_iq = float_to_uint(Motor_Set_All.set_iq, -11.0f,11.0f, 16);
     
     Set_RobStrite_Motor_parameter(0X7006, Motor_Set_All.set_iq, Set_parameter);
-    usleep(1000);
-
     Set_RobStrite_Motor_parameter(0X7007, Motor_Set_All.set_id, Set_parameter);
-    usleep(1000);
 
     return std::make_tuple(position_, velocity_, torque_, temperature_);
 }
@@ -510,23 +511,17 @@ std::tuple<float, float, float, float> RobStrideMotor::RobStrite_Motor_PosCSP_co
         usleep(1000);
 		Set_RobStrite_Motor_parameter(0X7005, PosCSP_control_mode, Set_mode);
         usleep(1000);
-
 		Get_RobStrite_Motor_parameter(0x7005);
         usleep(1000);
-
         enable_motor();
         usleep(1000);
-
 		Motor_Set_All.set_motor_mode = PosCSP_control_mode;
 	}
     // Note: Assuming logic for float conversion is correct for your application requirements
-	// Motor_Set_All.set_speed = float_to_uint(Motor_Set_All.set_speed, -ACTUATOR_OPERATION_MAPPING.at(static_cast<ActuatorType>(actuator_type)).velocity, ACTUATOR_OPERATION_MAPPING.at(static_cast<ActuatorType>(actuator_type)).velocity, 16);
+	// Motor_Set_All.set_speed = float_to_uint(Motor_Set_All.set_speed, 0.0f, ACTUATOR_OPERATION_MAPPING.at(static_cast<ActuatorType>(actuator_type)).velocity, 16);
 	
     Set_RobStrite_Motor_parameter(0X7017, Motor_Set_All.set_speed, Set_parameter);
-    usleep(1000);
-
 	Set_RobStrite_Motor_parameter(0X7016, Motor_Set_All.set_angle, Set_parameter);
-    usleep(1000);
 
     return std::make_tuple(position_, velocity_, torque_, temperature_);
 }
