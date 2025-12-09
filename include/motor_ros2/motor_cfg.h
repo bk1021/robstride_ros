@@ -1,21 +1,34 @@
+#ifndef MOTOR_CFG_H
+#define MOTOR_CFG_H
+
 #include <atomic>
 #include <iostream>
 #include <cstring>
 #include <cmath>
-#include <linux/can.h>
-#include <linux/can/raw.h>
-#include <net/if.h>
-#include <sys/ioctl.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#include <thread>
-#include <chrono>
-#include <ctime>
-#include <optional>
 #include <vector>
 #include <map>
 #include <bitset>
 #include <iomanip>
+#include <tuple>
+#include <optional>
+#include <thread>
+#include <chrono>
+
+// --- SERIAL PORT INCLUDES ---
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <errno.h>
+
+// --- MOCK CAN DEFINITIONS (To replace linux/can.h) ---
+#define CAN_EFF_FLAG 0x80000000U // Extended Frame Flag
+#define CAN_EFF_MASK 0x1FFFFFFFU // Extended Frame Mask
+
+struct can_frame {
+    uint32_t can_id;  // 32 bit CAN_ID + EFF/RTR/ERR flags
+    uint8_t  can_dlc; // frame payload length in byte (0 .. 8)
+    uint8_t  data[8];
+};
 
 #define Set_mode 	  'j' //设置控制模式
 #define Set_parameter 'p' //设置参数
@@ -160,75 +173,19 @@ public:
 class RobStrideMotor
 {
 public:
-    RobStrideMotor(const std::string can_interface, uint8_t master_id, uint8_t motor_id, int actuator_type)
-        : iface(can_interface), master_id(master_id), motor_id(motor_id), actuator_type(actuator_type)
+    RobStrideMotor(const std::string serial_port_name, uint8_t master_id, uint8_t motor_id, int actuator_type)
+        : iface(serial_port_name), master_id(master_id), motor_id(motor_id), actuator_type(actuator_type)
     {
-        init_socket();
+        init_serial();
     }
 
     ~RobStrideMotor()
     {
-        if (socket_fd >= 0)
-            close(socket_fd);
+        if (serial_fd >= 0)
+            close(serial_fd);
     }
 
-    ReceiveResult receive(double timeout_sec = 0)
-    {
-        // 设置超时时间
-        if (timeout_sec > 0)
-        {
-            struct timeval timeout;
-            timeout.tv_sec = static_cast<int>(timeout_sec);
-            timeout.tv_usec = static_cast<int>((timeout_sec - timeout.tv_sec) * 1e6);
-            setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
-        }
-
-        struct can_frame frame;
-        std::memset(&frame, 0, sizeof(frame));
-
-        ssize_t nbytes = recv(socket_fd, &frame, sizeof(struct can_frame), 0);
-
-        if (nbytes <= 0)
-        {
-            return std::nullopt; // 超时或失败
-        }
-
-        // 检查是否是扩展帧
-        if (!(frame.can_id & CAN_EFF_FLAG))
-        {
-            throw std::runtime_error("Frame is not extended ID");
-        }
-
-        uint32_t can_id = frame.can_id & CAN_EFF_MASK;
-
-        uint8_t communication_type = (can_id >> 24) & 0x1F;
-        uint16_t extra_data = (can_id >> 8) & 0xFFFF;
-        uint8_t host_id = can_id & 0xFF;
-
-        error_code = uint8_t((can_id >> 16) & 0x3F);
-        pattern = uint8_t((can_id>>22)&0x03);
-
-        // std::cout << "canid bits = " << std::bitset<32>(can_id) << std::endl;
-        // std::cout << "data bits = ";
-        // for (int i = 7; i >= 0; --i) { // 从高字节到低字节打印
-        //     std::cout << std::bitset<8>(frame.data[i]) << " ";
-        // }
-        std::cout << "canid = 0x" << std::hex << std::uppercase << can_id << std::dec << std::endl;
-
-        // std::cout << "data = ";
-        for (int i = 0; i < 8; ++i) 
-        {
-            std::cout << "data[" << i << "] = 0x"
-                    << std::setw(2) << std::setfill('0')
-                    << std::hex << std::uppercase
-                    << static_cast<int>(frame.data[i]) << "  ";
-        }
-        std::cout << std::dec << std::endl; // 恢复为十进制输出
-
-        std::vector<uint8_t> data(frame.data, frame.data + frame.can_dlc);
-
-        return std::make_tuple(communication_type, extra_data, host_id, data);
-    }
+    ReceiveResult receive(double timeout_sec = 0);
 
     std::tuple<float, float, float, float> return_data_pvtt()
     {
@@ -251,15 +208,23 @@ public:
 
     float read_initial_position();
 
-    void init_socket();
-
-    uint16_t float_to_uint(float x, float x_min, float x_max, int bits);
+    void init_serial();
+    
     // 发送运控模式（控制角度 + 速度 + KP + KD）
     std::tuple<float, float, float, float> send_motion_command(float torque,
                              float position_rad,
                              float velocity_rad_s,
                              float kp = 0.5f,
                              float kd = 0.1f);
+
+    uint16_t float_to_uint(float x, float x_min, float x_max, int bits)
+    {
+        if (x < x_min) x = x_min;
+        if (x > x_max) x = x_max;
+        float span = x_max - x_min;
+        float offset = x - x_min;
+        return static_cast<uint16_t>((offset * ((1 << bits) - 1)) / span);
+    }
 
     float uint_to_float(uint16_t x_int, float x_min, float x_max, int bits)
     {
@@ -275,6 +240,9 @@ public:
 	void Disenable_Motor( uint8_t clear_error);
 	void Set_CAN_ID(uint8_t Set_CAN_ID);
 	void Set_ZeroPos();
+
+    // Helper to send frame via NiRen protocol
+    void send_can_frame_niren(const struct can_frame& frame);
 
     float Byte_to_float(uint8_t* bytedata)  
     {  
@@ -297,9 +265,8 @@ public:
     std::string iface;
     uint8_t master_id;
     uint8_t motor_id;
-    int socket_fd = -1;
+    int serial_fd = -1;
 	Motor_Set Motor_Set_All;	// 设定值
-    data_read_write_one params;
     data_read_write drw;
 
     float position_ = 0.0;
@@ -312,3 +279,5 @@ public:
     std::atomic<bool> is_move_control_first = true;
     int actuator_type;
 };
+
+#endif

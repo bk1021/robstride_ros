@@ -15,7 +15,7 @@ class MotorControlSample : public rclcpp::Node
 public:
     MotorControlSample() : 
     rclcpp::Node("motor_control_set_node"),
-    motor(RobStrideMotor("can0", 0xFF, 0x01, 0))
+    motor(RobStrideMotor("/dev/ttyUSB1", 0x00, 0x7F, 0))
     {
         motor.enable_motor();
 
