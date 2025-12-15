@@ -181,9 +181,20 @@ public:
 
     ~RobStrideMotor()
     {
-        if (serial_fd >= 0)
+        if (serial_fd >= 0) {
+            try {
+                Disenable_Motor(0); 
+            } catch (...) {
+                std::cerr << "[Error] Failed to stop motor during destruction." << std::endl;
+            }
             close(serial_fd);
+            serial_fd = -1;
+        }
     }
+
+    // disable copy and move operations
+    RobStrideMotor(const RobStrideMotor&) = delete;
+    RobStrideMotor& operator=(const RobStrideMotor&) = delete;
 
     ReceiveResult receive(double timeout_sec = 0);
 
